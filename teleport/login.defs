@@ -1,0 +1,4 @@
+# Teleport reads PATH for SSH sessions from here. BusyBox applets in this
+# (distroless debug) image live in /busybox.
+ENV_SUPATH PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/busybox
+ENV_PATH   PATH=/usr/local/bin:/usr/bin:/bin:/busybox

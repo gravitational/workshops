@@ -1,0 +1,49 @@
+# SCIM groups map to Access Lists by title; members are synced by the simulator.
+# Created by teleport/setup.sh (--bootstrap can't create Access Lists).
+kind: access_list
+version: v1
+metadata:
+  name: admins
+spec:
+  type: scim     # required for SCIM groups to sync into the list
+  title: admins
+  description: Cluster administrators (SCIM group "admins").
+  owners:
+    - name: andrew.admin@duo.example.com
+  grants:
+    roles: [editor, auditor, access, root-access, root-access-reviewer, db-requester]
+  audit:
+    recurrence:
+      frequency: 12months
+---
+kind: access_list
+version: v1
+metadata:
+  name: readonly
+spec:
+  type: scim     # required for SCIM groups to sync into the list
+  title: readonly
+  description: Read-only users who request root-access (SCIM group "readonly").
+  owners:
+    - name: andrew.admin@duo.example.com
+  grants:
+    roles: [readonly, db-requester]
+  audit:
+    recurrence:
+      frequency: 12months
+---
+kind: access_list
+version: v1
+metadata:
+  name: dba
+spec:
+  type: scim     # required for SCIM groups to sync into the list
+  title: dba
+  description: Standing Postgres access (SCIM group "dba").
+  owners:
+    - name: andrew.admin@duo.example.com
+  grants:
+    roles: [db-access]
+  audit:
+    recurrence:
+      frequency: 12months

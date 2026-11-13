@@ -1,0 +1,91 @@
+# Applied by `teleport start --bootstrap` on first start only (empty backend).
+
+# SSH as root to every node. Granted to admins; requestable by readonly.
+kind: role
+version: v7
+metadata:
+  name: root-access
+spec:
+  allow:
+    logins: [root]
+    node_labels:
+      '*': '*'
+---
+# Can see nodes but not log in; may request root-access.
+kind: role
+version: v7
+metadata:
+  name: readonly
+spec:
+  allow:
+    node_labels:
+      '*': '*'
+    request:
+      roles: [root-access]
+      search_as_roles: [root-access]
+---
+# Can approve or deny requests for root-access and db-access.
+kind: role
+version: v7
+metadata:
+  name: root-access-reviewer
+spec:
+  allow:
+    review_requests:
+      roles: [root-access, db-access]
+      preview_as_roles: [root-access, db-access]
+---
+# Connect to every database as the postgres superuser. Granted to the "dba"
+# group (Andrew); requestable by everyone else.
+kind: role
+version: v7
+metadata:
+  name: db-access
+spec:
+  allow:
+    db_labels:
+      '*': '*'
+    db_names: [postgres, '*']   # named so the web UI can pre-fill it
+    db_users: [postgres]
+---
+# Can see databases but not connect; may request db-access.
+kind: role
+version: v7
+metadata:
+  name: db-requester
+spec:
+  allow:
+    db_labels:
+      '*': '*'
+    request:
+      roles: [db-access]
+      search_as_roles: [db-access]
+---
+kind: saml
+version: v2
+metadata:
+  name: simulator
+spec:
+  display: Duo
+  acs: https://teleport.localhost:3080/v1/webapi/saml/acs/simulator
+  service_provider_issuer: https://teleport.localhost:3080/v1/webapi/saml/acs/simulator
+  entity_descriptor_url: http://simulator:8080/saml/metadata
+  attributes_to_roles:
+    - name: groups
+      value: admins
+      roles: [editor, auditor, access, root-access, root-access-reviewer, db-requester]
+    - name: groups
+      value: readonly
+      roles: [readonly, db-requester]
+    - name: groups
+      value: dba
+      roles: [db-access]
+---
+# Make the simulator the default login on the web UI and tsh.
+kind: cluster_auth_preference
+version: v2
+metadata:
+  name: cluster-auth-preference
+spec:
+  type: saml
+  connector_name: simulator
