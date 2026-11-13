@@ -1,0 +1,147 @@
+name: teleport
+
+# `docker compose up` brings up a fully configured cluster:
+#   simulator        two fake IdPs in one container:
+#                      Duo-style SAML + SCIM      https://duo.localhost:8443
+#                      Okta org (for the wizard)  https://okta.localhost:9443
+#                      Entra ID tenant (wizard)   https://entra.localhost:10443
+#   teleport         Auth + Proxy + Node + DB, bootstrapped  https://teleport.localhost:3080
+#   teleport-setup   one-shot: creates Access Lists, installs the SCIM plugin,
+#                    shares the SCIM token with the simulator, and issues
+#                    Postgres's TLS cert
+#   postgres         reached only through Teleport (cert auth)
+#
+# Prerequisite: `make certs` (browser-trusted TLS certs in ./certs, via mkcert).
+#
+# Each *.localhost name is also a network alias, and container ports match
+# host ports, so the same URL works in the browser (*.localhost is loopback)
+# and between containers (Docker DNS answers the alias).
+#
+# All state lives in ./data. Bootstrap resources only apply on first start.
+# To start over:
+#   docker compose down && rm -rf data && docker compose up
+
+services:
+  simulator:
+    image: golang:1.27
+    container_name: simulator
+    restart: unless-stopped
+    working_dir: /src
+    command: ["go", "run", "."]
+    ports:
+      - "8443:8443"   # Duo-style IdP (browser)
+      - "9443:9443"   # Okta org (browser)
+      - "10443:443"   # Entra ID tenant (browser only; Teleport uses the Microsoft names)
+    networks:
+      default:
+        aliases:
+          - duo.localhost
+          - okta.localhost                          # Teleport calls the Okta API here
+          - entra.localhost
+          # Teleport only calls Microsoft's real hostnames for Entra ID, so on
+          # this network they resolve to the simulator (port 443).
+          - login.microsoftonline.com
+          - graph.microsoft.com
+    environment:
+      SIMULATOR_URL: https://duo.localhost:8443
+      SIMULATOR_DATA_DIR: /data
+      SIMULATOR_CA_EXPORT_DIR: /ca                  # Teleport trusts this CA (Microsoft names only)
+      SIMULATOR_TLS_CERT: /certs/localhost.pem      # mkcert, from `make certs`
+      SIMULATOR_TLS_KEY: /certs/localhost-key.pem
+      SSL_CERT_DIR: /etc/ssl/certs:/mkcert-ca       # trust Teleport's mkcert cert (SCIM)
+      OKTA_URL: https://okta.localhost:9443
+      ENTRA_LISTEN_ADDR: ":443"                     # Microsoft hostnames are reached on 443
+      ENTRA_URL: https://entra.localhost:10443
+      SCIM_URL: https://teleport.localhost:3080/v1/webapi/scim/scim
+      SCIM_TOKEN_FILE: /scim/token                  # written by teleport-setup
+    volumes:
+      - ./simulator:/src:ro
+      - go-cache:/root/go                           # module + build cache (not state)
+      - ./data/simulator:/data                      # IdP keys, CA, Okta state
+      - ./data/simulator-ca:/ca
+      - ./data/scim-token:/scim:ro
+      - ./certs:/certs:ro
+      - ./certs/ca:/mkcert-ca:ro
+    healthcheck:                                    # first start compiles; give it time
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/healthz"]
+      interval: 3s
+      start_period: 120s
+
+  teleport:
+    image: public.ecr.aws/gravitational/teleport-ent-distroless-debug:18.11.7
+    container_name: teleport
+    hostname: teleport
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - teleport.localhost
+    depends_on:
+      simulator:
+        condition: service_healthy   # Teleport fetches SAML metadata at bootstrap
+    command: ["--bootstrap", "/etc/teleport/bootstrap.yaml"]
+    environment:
+      # mkcert CA: Okta API, and the DB service tunneling to this proxy.
+      # Simulator CA: the fake Microsoft endpoints.
+      SSL_CERT_DIR: /etc/ssl/certs:/mkcert-ca:/simulator-ca
+    ports:
+      - "3080:3080"   # Web UI, tsh, and all multiplexed protocols
+    volumes:
+      - ./teleport/teleport.yaml:/etc/teleport/teleport.yaml:ro
+      - ./teleport/bootstrap.yaml:/etc/teleport/bootstrap.yaml:ro
+      - ./license.pem:/etc/teleport/license.pem:ro
+      # SSH sessions: distroless root has /sbin/nologin; use the debug image's BusyBox
+      - ./teleport/passwd:/etc/passwd:ro
+      - ./teleport/profile:/etc/profile:ro
+      - ./teleport/login.defs:/etc/login.defs:ro   # session PATH includes /busybox
+      - ./data/teleport:/var/lib/teleport
+      - ./data/simulator-ca:/simulator-ca:ro
+      - ./certs:/etc/teleport/certs:ro
+      - ./certs/ca:/mkcert-ca:ro
+
+  teleport-setup:
+    image: public.ecr.aws/gravitational/teleport-ent-distroless-debug:18.11.7
+    container_name: teleport-setup
+    depends_on: [teleport]
+    network_mode: service:teleport   # tctl talks to Auth on localhost
+    entrypoint: ["/busybox/sh", "/setup.sh"]
+    environment:
+      SSL_CERT_DIR: /etc/ssl/certs:/mkcert-ca   # tctl dials the proxy's mkcert cert
+    volumes:
+      - ./teleport/teleport.yaml:/etc/teleport/teleport.yaml:ro
+      - ./teleport/setup.sh:/setup.sh:ro
+      - ./teleport/access-lists.yaml:/access-lists.yaml:ro
+      - ./data/teleport:/var/lib/teleport
+      - ./data/scim-token:/scim
+      - ./data/pg-certs:/pg-certs
+      - ./certs:/etc/teleport/certs:ro   # tctl checks the https_keypairs in teleport.yaml exist
+      - ./certs/ca:/mkcert-ca:ro
+
+  postgres:
+    image: postgres:17
+    container_name: postgres
+    restart: unless-stopped
+    depends_on:
+      teleport-setup:
+        condition: service_completed_successfully   # needs the TLS cert
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/certs/server.crt
+      - -c
+      - ssl_key_file=/certs/server.key
+      - -c
+      - ssl_ca_file=/certs/server.cas
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust   # no password; pg_hba.conf requires certs
+    volumes:
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./data/pg-certs:/certs:ro
+      - ./data/postgres:/var/lib/postgresql/data
+
+volumes:
+  go-cache:

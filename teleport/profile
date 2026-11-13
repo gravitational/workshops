@@ -1,0 +1,3 @@
+# Login shell profile for SSH sessions into this (distroless) container.
+# PATH comes from login.defs.
+export PS1='\u@\h:\w\$ '

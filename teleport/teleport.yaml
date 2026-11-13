@@ -1,0 +1,37 @@
+version: v3
+teleport:
+  nodename: teleport
+  data_dir: /var/lib/teleport
+  log:
+    output: stderr
+    severity: INFO
+
+auth_service:
+  enabled: true
+  cluster_name: teleport.localhost
+  listen_addr: 0.0.0.0:3025
+  proxy_listener_mode: multiplex
+  license_file: /etc/teleport/license.pem
+
+proxy_service:
+  enabled: true
+  web_listen_addr: 0.0.0.0:3080
+  # Same name in the browser (loopback) and in containers (network alias)
+  public_addr: teleport.localhost:3080
+  https_keypairs:   # mkcert, from `make certs`
+    - key_file: /etc/teleport/certs/localhost-key.pem
+      cert_file: /etc/teleport/certs/localhost.pem
+
+ssh_service:
+  enabled: true
+  labels:
+    env: docker
+
+db_service:
+  enabled: true
+  databases:
+    - name: postgres
+      protocol: postgres
+      uri: postgres:5432   # TLS cert issued by teleport-setup
+      static_labels:
+        env: docker

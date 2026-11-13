@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Entra ID Simulator</title>
+<style>
+  body { margin: 0; padding: 32px 16px; background: #f2f2f2; color: #1b1b1b;
+         font: 14px/1.5 "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif; }
+  main { max-width: 860px; margin: 0 auto; }
+  section { background: #fff; border: 1px solid #e1e1e1; border-radius: 4px; padding: 20px 24px; margin-bottom: 16px; }
+  h1 { font-size: 22px; margin: 0 0 4px; } h2 { font-size: 16px; margin: 0 0 12px; }
+  .lead { color: #616161; margin: 0 0 18px; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; vertical-align: top; }
+  th { color: #616161; font-weight: 600; }
+  .kv th { width: 210px; }
+  code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+  .muted { color: #616161; }
+  pre { background: #f6f7f9; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 12px; max-height: 320px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Entra ID Simulator</h1>
+  <p class="lead">A fake Microsoft Entra ID tenant for Teleport's Entra ID integration (<code>/web/integrations/new/entra-id</code>). Any client ID, assertion or token is accepted.</p>
+
+  <section>
+    <h2>Values for the Teleport wizard</h2>
+    <table class="kv">
+      <tr><th>Tenant ID</th><td><code>{{.TenantID}}</code></td></tr>
+      <tr><th>Client ID</th><td><code>{{.ClientID}}</code></td></tr>
+      <tr><th>Federation metadata URL</th><td><code>{{.MetadataURL}}</code><br><span class="muted">Teleport builds this from the IDs above.</span></td></tr>
+    </table>
+    <p class="muted">Skip the Azure Cloud Shell script step; there is no real Azure tenant.</p>
+  </section>
+
+  <section>
+    <h2>Users</h2>
+    <table>
+      <tr><th>Name</th><th>User principal name</th><th>Object ID</th><th>Groups</th></tr>
+      {{range .Users}}<tr><td>{{.Name}}</td><td><code>{{.Detail}}</code></td><td><code>{{.ID}}</code></td><td>{{join .Members ", "}}</td></tr>{{end}}
+    </table>
+  </section>
+
+  <section>
+    <h2>Groups</h2>
+    <table>
+      <tr><th>Name</th><th>Object ID</th><th>Members</th></tr>
+      {{range .Groups}}<tr><td>{{.Name}}</td><td><code>{{.ID}}</code></td><td>{{join .Members ", "}}</td></tr>{{end}}
+    </table>
+  </section>
+
+  <section>
+    <h2>SAML details</h2>
+    <table class="kv">
+      <tr><th>Entity ID</th><td><code>{{.EntityID}}</code></td></tr>
+      <tr><th>SSO URL (browser)</th><td><code>{{.SSOURL}}</code></td></tr>
+      <tr><th>Groups claim</th><td>group object IDs</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Recent API calls</h2>
+    {{if .Calls}}<pre>{{range .Calls}}{{.}}
+{{end}}</pre>{{else}}<p class="muted">None yet.</p>{{end}}
+  </section>
+</main>
+</body>
+</html>

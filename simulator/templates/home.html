@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simulator</title>
+<style>
+  body { margin: 0; padding: 32px 16px; background: #f3f4f6; color: #1f2933;
+         font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; }
+  section { background: #fff; border-radius: 8px; padding: 20px 24px; margin-bottom: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  h1 { font-size: 22px; margin: 0 0 16px; } h2 { font-size: 16px; margin: 0 0 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eef0f2; vertical-align: top; }
+  th { color: #5f6b7a; font-weight: 600; width: 140px; }
+  code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+  .ok { color: #2f6f2a; } .err { color: #b42318; } .muted { color: #5f6b7a; }
+  button { background: #3d8b37; color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; cursor: pointer; font: inherit; }
+  pre { background: #f6f7f9; padding: 10px; border-radius: 6px; overflow-x: auto; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Simulator</h1>
+  <p class="muted">Duo-style IdP. The Okta simulator runs separately at <a href="{{.OktaURL}}">{{.OktaURL}}</a>.</p>
+
+  <section>
+    <h2>SAML identity provider</h2>
+    <table>
+      <tr><th>Entity ID</th><td><code>{{.EntityID}}</code></td></tr>
+      <tr><th>Metadata</th><td><a href="{{.MetadataURL}}"><code>{{.MetadataURL}}</code></a></td></tr>
+      <tr><th>SSO URL</th><td><code>{{.SSOURL}}</code></td></tr>
+      <tr><th>NameID</th><td>email address</td></tr>
+      <tr><th>Attributes</th><td><code>username, email, firstName, lastName, displayName, groups</code></td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>Users</h2>
+    <table>
+      <tr><th>Name</th><th>Username</th><th>Groups</th></tr>
+      {{range .Users}}<tr><td>{{.DisplayName}}</td><td><code>{{.UserName}}</code></td><td>{{range $i, $g := .Groups}}{{if $i}}, {{end}}<code>{{$g}}</code>{{end}}</td></tr>{{end}}
+    </table>
+  </section>
+
+  <section>
+    <h2>SCIM provisioning</h2>
+    {{with .SCIM}}
+      {{if .Enabled}}
+        <table>
+          <tr><th>Target</th><td><code>{{.URL}}</code></td></tr>
+          <tr><th>Last sync</th><td>
+            {{if .LastSync.IsZero}}<span class="muted">pending</span>
+            {{else if .LastErr}}<span class="err">failed {{.LastSync.Format "15:04:05"}}</span>
+            {{else}}<span class="ok">ok {{.LastSync.Format "15:04:05"}}</span>{{end}}
+          </td></tr>
+        </table>
+        {{if .Log}}<pre>{{range .Log}}{{.}}
+{{end}}</pre>{{end}}
+        <form method="post" action="/scim/sync"><button type="submit">Sync now</button></form>
+      {{else}}
+        <p class="muted">Disabled. Set <code>SCIM_URL</code> (and <code>SCIM_TOKEN</code>) to push users and groups.</p>
+      {{end}}
+    {{end}}
+  </section>
+</main>
+</body>
+</html>
