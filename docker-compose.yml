@@ -35,11 +35,12 @@ name: teleport
 
 services:
   simulator:
-    image: golang:1.27
+    image: ${WORKSHOP_IMAGE_PREFIX:-workshops}/simulator:${WORKSHOP_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.simulator
     container_name: simulator
     restart: unless-stopped
-    working_dir: /src
-    command: ["go", "run", "."]
     ports:
       - "8443:8443"   # Duo-style IdP (browser)
       - "9443:9443"   # Okta org (browser)
@@ -82,13 +83,16 @@ services:
       - ./data/scim-token:/scim:ro
       - ./certs:/certs:ro
       - ./certs/ca:/mkcert-ca:ro
-    healthcheck:                                    # first start compiles; give it time
+    healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8080/healthz"]
       interval: 3s
-      start_period: 120s
+      start_period: 10s
 
   teleport:
-    image: ${TELEPORT_IMAGE:-public.ecr.aws/gravitational/teleport-ent-distroless-debug:19.0.1}
+    image: ${WORKSHOP_IMAGE_PREFIX:-workshops}/teleport:${WORKSHOP_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.teleport
     container_name: teleport
     hostname: teleport
     restart: unless-stopped
@@ -127,7 +131,10 @@ services:
       start_period: 120s
 
   teleport-setup:
-    image: ${TELEPORT_IMAGE:-public.ecr.aws/gravitational/teleport-ent-distroless-debug:19.0.1}
+    image: ${WORKSHOP_IMAGE_PREFIX:-workshops}/teleport:${WORKSHOP_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.teleport
     container_name: teleport-setup
     depends_on:
       teleport:
@@ -173,6 +180,7 @@ services:
       - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
       - ./data/pg-certs:/certs:ro
       - ./data/postgres:/var/lib/postgresql/data
+<<<<<<< HEAD
 
   k3s:
     image: rancher/k3s:v1.33.13-k3s2

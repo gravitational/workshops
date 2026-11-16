@@ -1,0 +1,10 @@
+# Allowlist public build inputs; licenses, certificates, and data stay local.
+**
+!Dockerfile.*
+!.dockerignore
+!docker-compose.yml
+!Makefile
+!README.md
+!simulator/**
+!teleport/**
+!postgres/**
