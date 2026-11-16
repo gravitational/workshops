@@ -14,7 +14,8 @@
 //     Actions OIDC token issuer, the jobs' ID token endpoint, a run queue
 //     and API for the CI runner container, and workflow dispatch.
 //
-// It runs with no CLI flags. Everything is optional and configured via env:
+// Server settings are configured via env. Use -healthcheck to probe the running
+// server's HTTP health endpoint and exit without starting any services:
 //
 //	SIMULATOR_LISTEN_ADDR      Duo HTTP listen address  (default ":8080")
 //	SIMULATOR_TLS_LISTEN_ADDR  Duo HTTPS listen address (default ":8443")
@@ -43,6 +44,7 @@ import (
 	"context"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"flag"
 	"log"
 	"net/http"
 	"os"
@@ -187,6 +189,15 @@ func loadConfig() Config {
 }
 
 func main() {
+	healthcheck := flag.Bool("healthcheck", false, "Check the running simulator's health and exit")
+	flag.Parse()
+	if *healthcheck {
+		if err := checkHealth(); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
 	cfg := loadConfig()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
