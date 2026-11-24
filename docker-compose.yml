@@ -1,15 +1,23 @@
 name: teleport
 
 # `docker compose up` brings up a fully configured cluster:
-#   simulator        two fake IdPs in one container:
+#   simulator        fake IdPs and a fake GitHub in one container:
 #                      Duo-style SAML + SCIM      https://duo.localhost:8443
 #                      Okta org (for the wizard)  https://okta.localhost:9443
 #                      Entra ID tenant (wizard)   https://entra.localhost:10443
+#                      GitHub Enterprise Server   https://github.localhost:11443
+#                        (Actions OIDC issuer for Teleport's `github` join)
 #   teleport         Auth + Proxy + Node + DB, bootstrapped  https://teleport.localhost:3080
-#   teleport-setup   one-shot: creates Access Lists, installs the SCIM plugin,
-#                    shares the SCIM token with the simulator, and issues
-#                    Postgres's TLS cert
+#   teleport-setup   one-shot: creates Access Lists, the GitHub Actions bot,
+#                    role and join token, installs the SCIM plugin, shares the
+#                    SCIM token with the simulator, and issues Postgres's TLS cert
 #   postgres         reached only through Teleport (cert auth)
+#   k3s              Kubernetes cluster `k3s`, reached through Teleport's
+#                    kubernetes_service; applies k3s/manifests on start
+#   k3s-kubeconfig   one-shot: points k3s's admin kubeconfig at https://k3s:6443
+#                    for Teleport
+#   ci-runner        the simulated GitHub Actions runner: runs dispatched
+#                    workflows (tbot + kubectl) against Teleport and k3s
 #
 # Prerequisite: `make certs` (browser-trusted TLS certs in ./certs, via mkcert).
 #
@@ -17,9 +25,13 @@ name: teleport
 # host ports, so the same URL works in the browser (*.localhost is loopback)
 # and between containers (Docker DNS answers the alias).
 #
-# All state lives in ./data. Bootstrap resources only apply on first start.
-# To start over:
-#   docker compose down && rm -rf data && docker compose up
+# The simulated GitHub repo is GITHUB_REPOSITORY (default
+# example-org/teleport-k8s-demo); set it in the environment or .env to match
+# your own repo. Both the simulator and the join token use it.
+#
+# All state lives in ./data, plus the k3s-data volume. Bootstrap resources
+# only apply on first start. To start over:
+#   make clean && docker compose up
 
 services:
   simulator:
@@ -32,12 +44,15 @@ services:
       - "8443:8443"   # Duo-style IdP (browser)
       - "9443:9443"   # Okta org (browser)
       - "10443:443"   # Entra ID tenant (browser only; Teleport uses the Microsoft names)
+      # GitHub Enterprise Server (browser; the runner and Teleport use the network)
+      - "127.0.0.1:11443:11443"
     networks:
       default:
         aliases:
           - duo.localhost
           - okta.localhost                          # Teleport calls the Okta API here
           - entra.localhost
+          - github.localhost                        # Teleport fetches the Actions OIDC keys here
           # Teleport only calls Microsoft's real hostnames for Entra ID, so on
           # this network they resolve to the simulator (port 443).
           - login.microsoftonline.com
@@ -52,10 +67,15 @@ services:
       OKTA_URL: https://okta.localhost:9443
       ENTRA_LISTEN_ADDR: ":443"                     # Microsoft hostnames are reached on 443
       ENTRA_URL: https://entra.localhost:10443
+      GITHUB_LISTEN_ADDR: ":11443"
+      GITHUB_URL: https://github.localhost:11443
+      GITHUB_REPOSITORY: ${GITHUB_REPOSITORY:-example-org/teleport-k8s-demo}
+      GITHUB_REPO_DIR: /github-repo
       SCIM_URL: https://teleport.localhost:3080/v1/webapi/scim/scim
       SCIM_TOKEN_FILE: /scim/token                  # written by teleport-setup
     volumes:
       - ./simulator:/src:ro
+      - ./github/repo:/github-repo:ro               # the simulated repo's contents
       - go-cache:/root/go                           # module + build cache (not state)
       - ./data/simulator:/data                      # IdP keys, CA, Okta state
       - ./data/simulator-ca:/ca
@@ -79,6 +99,8 @@ services:
     depends_on:
       simulator:
         condition: service_healthy   # Teleport fetches SAML metadata at bootstrap
+      k3s-kubeconfig:
+        condition: service_completed_successfully   # kubernetes_service reads it at start
     command: ["--bootstrap", "/etc/teleport/bootstrap.yaml"]
     environment:
       # mkcert CA: Okta API, and the DB service tunneling to this proxy.
@@ -96,21 +118,30 @@ services:
       - ./teleport/login.defs:/etc/login.defs:ro   # session PATH includes /busybox
       - ./data/teleport:/var/lib/teleport
       - ./data/simulator-ca:/simulator-ca:ro
+      - ./data/kube:/etc/teleport/kube:ro   # written by k3s-kubeconfig
       - ./certs:/etc/teleport/certs:ro
       - ./certs/ca:/mkcert-ca:ro
+    healthcheck:   # diag_addr in teleport.yaml; not published
+      test: ["CMD", "/busybox/wget", "-q", "-O-", "http://127.0.0.1:3000/readyz"]
+      interval: 3s
+      start_period: 120s
 
   teleport-setup:
     image: public.ecr.aws/gravitational/teleport-ent-distroless-debug:18.11.7
     container_name: teleport-setup
-    depends_on: [teleport]
+    depends_on:
+      teleport:
+        condition: service_healthy   # Auth must be up before tctl runs
     network_mode: service:teleport   # tctl talks to Auth on localhost
     entrypoint: ["/busybox/sh", "/setup.sh"]
     environment:
       SSL_CERT_DIR: /etc/ssl/certs:/mkcert-ca   # tctl dials the proxy's mkcert cert
+      GITHUB_REPOSITORY: ${GITHUB_REPOSITORY:-example-org/teleport-k8s-demo}   # the join token allows this repo
     volumes:
       - ./teleport/teleport.yaml:/etc/teleport/teleport.yaml:ro
       - ./teleport/setup.sh:/setup.sh:ro
       - ./teleport/access-lists.yaml:/access-lists.yaml:ro
+      - ./teleport/gha-demo-resources.yaml:/gha-demo-resources.yaml:ro
       - ./data/teleport:/var/lib/teleport
       - ./data/scim-token:/scim
       - ./data/pg-certs:/pg-certs
@@ -143,5 +174,71 @@ services:
       - ./data/pg-certs:/certs:ro
       - ./data/postgres:/var/lib/postgresql/data
 
+  k3s:
+    image: rancher/k3s:v1.33.13-k3s2
+    container_name: k3s
+    hostname: k3s
+    restart: unless-stopped
+    privileged: true
+    tmpfs: [/run, /var/run]
+    command: ["server", "--tls-san", "k3s", "--disable", "traefik", "--disable", "metrics-server"]
+    environment:
+      K3S_KUBECONFIG_OUTPUT: /output/kubeconfig.yaml   # admin kubeconfig, server 127.0.0.1
+      K3S_KUBECONFIG_MODE: "644"
+      KUBECONFIG: /output/kubeconfig.yaml             # `docker compose exec k3s kubectl`
+    volumes:
+      # A volume, not ./data: k3s needs unix sockets and overlayfs, which
+      # Docker Desktop's bind mounts don't support
+      - k3s-data:/var/lib/rancher/k3s
+      - ./data/k3s-kubeconfig:/output
+      # k3s applies everything here on start: namespace demo and the CI's RBAC
+      - ./k3s/manifests:/var/lib/rancher/k3s/server/manifests/demo:ro
+    healthcheck:
+      test: ["CMD", "kubectl", "get", "--raw", "/readyz"]
+      interval: 3s
+      start_period: 120s   # cold start pulls images and writes certs
+      retries: 10
+
+  # Teleport reaches k3s by its service name, and names the cluster after the
+  # kubeconfig context, so rename `default` to `k3s`.
+  k3s-kubeconfig:
+    image: busybox:1.37
+    container_name: k3s-kubeconfig
+    depends_on:
+      k3s:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - >-
+        sed -e 's#https://127.0.0.1:6443#https://k3s:6443#'
+        -e 's/: default$$/: k3s/'
+        /k3s/kubeconfig.yaml > /kube/kubeconfig.yaml
+    volumes:
+      - ./data/k3s-kubeconfig:/k3s:ro
+      - ./data/kube:/kube
+
+  # Runs the GHES's queued workflow runs. Holds no Teleport credentials: each
+  # job's tbot joins with the run's GitHub ID token.
+  ci-runner:
+    build:
+      context: ./simulator
+      dockerfile: cmd/ci-runner/Dockerfile
+    container_name: ci-runner
+    restart: unless-stopped
+    init: true   # reap the tbot/kubectl/bash processes each job spawns
+    depends_on:
+      simulator:
+        condition: service_healthy
+      teleport-setup:
+        condition: service_completed_successfully   # bot, role and join token exist
+    environment:
+      GITHUB_URL: https://github.localhost:11443
+      SSL_CERT_DIR: /etc/ssl/certs:/mkcert-ca   # trust the GHES's and Teleport's mkcert certs
+    volumes:
+      - ./github/repo:/github-repo:ro           # checked out into each job's workspace
+      - ./certs/ca:/mkcert-ca:ro
+
 volumes:
   go-cache:
+  k3s-data:                                       # cluster state (see `make clean`)

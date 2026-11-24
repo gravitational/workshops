@@ -1,0 +1,52 @@
+{{define "content"}}{{$repo := .Repo}}{{with .Data}}
+<div class="actions">
+  <aside class="sidebar">
+    <h2>Actions</h2>
+    <a href="/{{$repo}}/actions"{{if not .Selected}} class="selected"{{end}}>All workflows</a>
+    {{range .Workflows}}
+    <a href="/{{$repo}}/actions?workflow={{.File}}"{{if and $.Data.Selected (eq $.Data.Selected.File .File)}} class="selected"{{end}}{{if .Err}} title="{{.Err}}"{{end}}>{{if .Err}}{{icon "warning"}} {{end}}{{.Name}}</a>
+    {{end}}
+  </aside>
+  <section class="runs">
+    {{with .Selected}}
+    <h2>{{.Name}}</h2>
+    <p class="muted"><a href="/{{$repo}}/blob/main/{{.Path}}">{{.File}}</a></p>
+    {{if .Err}}<div class="flash error">{{icon "warning"}} <div><strong>Invalid workflow file</strong><pre>{{.Err}}</pre></div></div>{{end}}
+    {{else}}
+    <h2>All workflows</h2>
+    <p class="muted">Showing runs from all workflows</p>
+    {{end}}
+    <div class="box">
+      <div class="box-head runs-head">
+        <strong>{{len .Runs}} workflow run{{if ne (len .Runs) 1}}s{{end}}</strong>
+        {{with .Selected}}{{if .Dispatchable}}
+        <div class="dispatch">
+          <span class="muted">This workflow has a <code>workflow_dispatch</code> event trigger.</span>
+          <details class="dropdown">
+            <summary class="btn">Run workflow <span class="caret">▾</span></summary>
+            <form class="menu" method="post" action="/{{$repo}}/actions/workflows/{{.File}}/dispatches">
+              <label for="ref">Use workflow from</label>
+              <select id="ref" name="ref">{{range $.Data.Branches}}<option value="{{.}}">Branch: {{.}}</option>{{end}}</select>
+              <button class="btn btn-primary" type="submit">Run workflow</button>
+            </form>
+          </details>
+        </div>
+        {{end}}{{end}}
+      </div>
+      {{range .Runs}}
+      <div class="run-row">
+        <span class="state {{.State}}">{{icon .State}}</span>
+        <div class="run-main">
+          <a href="{{.Href}}"><strong>{{.WorkflowName}}</strong></a>
+          <div class="muted small"><strong>{{.WorkflowName}}</strong> #{{.Number}}: Manually run by {{.Actor}}</div>
+        </div>
+        <span class="branch-label">{{.Branch}}</span>
+        <span class="muted small">{{ago .Created}}</span>
+      </div>
+      {{else}}
+      <p class="blankslate">There are no workflow runs yet.</p>
+      {{end}}
+    </div>
+  </section>
+</div>
+{{end}}{{end}}

@@ -1,0 +1,41 @@
+# Cluster-side RBAC for the GitHub Actions bot.
+# k3s applies this file automatically from /var/lib/rancher/k3s/server/manifests/.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+  labels:
+    # Reject privileged pods, host mounts and host networking in demo
+    pod-security.kubernetes.io/enforce: baseline
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: github-ci-deploy
+  namespace: demo
+rules:
+  # Restrict the Role to what the CI job updates.
+  # If your CI needs to create or modify other kinds, expand these lists.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Pods are in the core ("") API group; read access lets the job watch the
+  # rollout and list the pods.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: github-ci-deploy
+  namespace: demo
+subjects:
+  - kind: Group
+    # Matches `kubernetes_groups` in the Teleport role github-actions-k8s-demo.
+    name: github-ci
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: github-ci-deploy
+  apiGroup: rbac.authorization.k8s.io

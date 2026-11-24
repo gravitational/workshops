@@ -2,6 +2,8 @@ version: v3
 teleport:
   nodename: teleport
   data_dir: /var/lib/teleport
+  # Health endpoints for the compose healthcheck (/readyz); not published
+  diag_addr: 0.0.0.0:3000
   log:
     output: stderr
     severity: INFO
@@ -35,3 +37,12 @@ db_service:
       uri: postgres:5432   # TLS cert issued by teleport-setup
       static_labels:
         env: docker
+
+kubernetes_service:
+  enabled: true
+  listen_addr: 0.0.0.0:3027   # the proxy (same process) dials this
+  # k3s's admin kubeconfig, rewritten by the k3s-kubeconfig service; each
+  # context (`k3s`) becomes a Kubernetes cluster of that name
+  kubeconfig_file: /etc/teleport/kube/kubeconfig.yaml
+  labels:
+    env: docker

@@ -1,0 +1,28 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · GitHub Enterprise Server (simulated)</title>
+<link rel="stylesheet" href="/_static/style.css">
+</head>
+<body>
+<header class="appbar">
+  <a class="brand" href="/">GitHub Enterprise Server <span>(simulated)</span></a>
+  <span class="appbar-user" title="Signed in as {{.Owner}}">{{.Owner}}</span>
+</header>
+<div class="repohead">
+  <div class="wrap">
+    <h1 class="reponame">{{icon "workflow"}} <span>{{.Owner}}</span> / <a href="/{{.Repo}}"><strong>{{.Name}}</strong></a> <span class="label">Internal</span></h1>
+    <nav class="tabs">
+      <a href="/{{.Repo}}"{{if eq .Tab "code"}} class="selected"{{end}}>{{icon "file"}} Code</a>
+      <a href="/{{.Repo}}/actions"{{if eq .Tab "actions"}} class="selected"{{end}}>{{icon "in_progress"}} Actions</a>
+    </nav>
+  </div>
+</div>
+<main class="wrap">
+{{template "content" .}}
+</main>
+</body>
+</html>
+{{end}}

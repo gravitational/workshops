@@ -10,6 +10,9 @@
 //     Microsoft identity platform token/discovery endpoints and Microsoft
 //     Graph (any credential accepted). Teleport only calls Microsoft's real
 //     hostnames, so Docker aliases them to this container.
+//   - "GitHub": a simulated GitHub Enterprise Server on its own port: the
+//     Actions OIDC token issuer, the jobs' ID token endpoint, a run queue
+//     and API for the CI runner container, and workflow dispatch.
 //
 // It runs with no CLI flags. Everything is optional and configured via env:
 //
@@ -25,6 +28,10 @@
 //	OKTA_ORG_URL               Okta org URL given to Teleport (default OKTA_URL)
 //	ENTRA_LISTEN_ADDR          Entra ID HTTPS listen address (default ":10443")
 //	ENTRA_URL                  Entra ID URL browsers use     (default "https://entra.localhost:10443")
+//	GITHUB_LISTEN_ADDR         GHES HTTPS listen address     (default ":11443")
+//	GITHUB_URL                 GHES URL (browsers, runner, OIDC issuer) (default "https://github.localhost:11443")
+//	GITHUB_REPOSITORY          simulated repo, owner/name    (default "example-org/teleport-k8s-demo")
+//	GITHUB_REPO_DIR            the simulated repo's contents (default "../github/repo")
 //	SCIM_URL                   Duo SCIM base URL to push to (Duo SCIM disabled if empty)
 //	SCIM_TOKEN                 bearer token for SCIM_URL
 //	SCIM_TOKEN_FILE            file holding the bearer token; re-read each sync
@@ -34,6 +41,8 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"log"
 	"net/http"
 	"os"
@@ -42,6 +51,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"simulator/github/ghes"
 )
 
 // User is a directory user known to the simulator.
@@ -128,6 +139,9 @@ type Config struct {
 
 	EntraListenAddr string
 	EntraURL        string
+
+	GitHubListenAddr string
+	GitHub           ghes.Config // Key is loaded in main
 }
 
 func env(key, def string) string {
@@ -163,6 +177,12 @@ func loadConfig() Config {
 		EntraURL:        strings.TrimRight(env("ENTRA_URL", "https://entra.localhost:10443"), "/"),
 	}
 	cfg.OktaOrgURL = strings.TrimRight(env("OKTA_ORG_URL", cfg.OktaURL), "/")
+	cfg.GitHubListenAddr = env("GITHUB_LISTEN_ADDR", ":11443")
+	cfg.GitHub = ghes.Config{
+		URL:        strings.TrimRight(env("GITHUB_URL", "https://github.localhost:11443"), "/"),
+		Repository: env("GITHUB_REPOSITORY", "example-org/teleport-k8s-demo"),
+		RepoDir:    env("GITHUB_REPO_DIR", "../github/repo"),
+	}
 	return cfg
 }
 
@@ -219,12 +239,29 @@ func main() {
 		log.Fatalf("entra: %v", err)
 	}
 
-	// Duo: HTTP (in-network metadata) and HTTPS (browsers). Okta, Entra: HTTPS only.
+	// Simulated GitHub Enterprise Server. Its OIDC signing key is persisted so
+	// tokens verify across restarts.
+	ghKey, _, err := loadOrCreateKeyPair(cfg.DataDir, "github-oidc", &x509.Certificate{
+		Subject:  pkix.Name{CommonName: "github-oidc", Organization: []string{"Simulator"}},
+		KeyUsage: x509.KeyUsageDigitalSignature,
+	})
+	if err != nil {
+		log.Fatalf("github: %v", err)
+	}
+	cfg.GitHub.Key = ghKey
+	github, err := ghes.New(cfg.GitHub)
+	if err != nil {
+		log.Fatalf("github: %v", err)
+	}
+	go github.Run(ctx)
+
+	// Duo: HTTP (in-network metadata) and HTTPS (browsers). Okta, Entra, GitHub: HTTPS only.
 	servers := []*http.Server{
 		{Addr: cfg.ListenAddr, Handler: logRequests("duo", mux)},
 		{Addr: cfg.TLSListenAddr, Handler: logRequests("duo", mux), TLSConfig: tlsConfig},
 		{Addr: cfg.OktaListenAddr, Handler: logRequests("okta", oktaHandler(org, oktaIDP, oktaSCIM)), TLSConfig: tlsConfig},
 		{Addr: cfg.EntraListenAddr, Handler: logRequests("entra", entra.handler()), TLSConfig: tlsConfig},
+		{Addr: cfg.GitHubListenAddr, Handler: logRequests("github", github.Handler()), TLSConfig: tlsConfig},
 	}
 	errc := make(chan error, len(servers))
 	for _, srv := range servers {
@@ -240,6 +277,7 @@ func main() {
 	log.Printf("duo:  listening on %s (http) and %s (https); console %s", cfg.ListenAddr, cfg.TLSListenAddr, cfg.BaseURL)
 	log.Printf("okta: listening on %s (https); console %s; org URL %s", cfg.OktaListenAddr, cfg.OktaURL, cfg.OktaOrgURL)
 	log.Printf("entra: listening on %s (https); console %s", cfg.EntraListenAddr, cfg.EntraURL)
+	log.Printf("github: listening on %s (https); console %s; repo %s", cfg.GitHubListenAddr, cfg.GitHub.URL, cfg.GitHub.Repository)
 	printOktaWizardValues(org)
 	printEntraWizardValues(entra)
 
@@ -259,11 +297,27 @@ func healthz(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) }
 
 func logRequests(name string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/healthz" {
+		if !isPolling(r) {
 			log.Printf("%s: %s %s", name, r.Method, r.URL.RequestURI())
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isPolling reports whether r is one of the requests clients repeat every
+// second or so, which would drown out the rest of the log: health checks,
+// the runner claiming jobs, and the run page polling its run's state.
+func isPolling(r *http.Request) bool {
+	p := r.URL.Path
+	switch {
+	case p == "/healthz":
+		return true
+	case r.Method == http.MethodPost && p == "/_runner/jobs/claim":
+		return true
+	case r.Method == http.MethodGet && strings.HasSuffix(p, ".json") && strings.Contains(p, "/actions/runs/"):
+		return true
+	}
+	return false
 }
 
 // printOktaWizardValues prints what to paste into Teleport's Okta enrollment

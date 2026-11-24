@@ -1,6 +1,6 @@
 #!/busybox/sh
-# One-shot: create Access Lists and install the SCIM plugin (neither can be
-# created by --bootstrap),
+# One-shot: create Access Lists, the GitHub Actions bot (role, bot and join
+# token) and install the SCIM plugin (none of which --bootstrap can create),
 # then write the SCIM bearer token to /scim/token for the simulator.
 set -e
 # Runs in Teleport's network namespace, so tctl reaches Auth on localhost.
@@ -11,6 +11,14 @@ until tctl status >/dev/null 2>&1; do echo "waiting for Teleport..."; sleep 2; d
 # Access Lists that SCIM groups map onto (by title). Retried: on first start
 # Teleport may still be initializing its data dir.
 until tctl create -f /access-lists.yaml; do echo "retrying..."; sleep 2; done
+
+# GitHub Actions bot: role, bot and `github` join token.
+# The resources are kept generic for copying to a real setup; fill in the repository here.
+: "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY must be set (owner/name)}"
+mkdir -p /tmp/github-actions
+sed "s|\${GITHUB_REPOSITORY}|$GITHUB_REPOSITORY|g" "/gha-demo-resources.yaml" > "/tmp/gha-demo-resources.yaml"
+tctl create -f "/tmp/gha-demo-resources.yaml"
+echo "GitHub Actions bot ready for $GITHUB_REPOSITORY"
 
 # Postgres TLS cert signed by Teleport's DB CA (Teleport authenticates with
 # client certs). Files must be readable by the postgres user (uid 999), and

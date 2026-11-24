@@ -1,0 +1,17 @@
+{{define "content"}}{{with .Data}}
+<div class="filenav">
+  <span class="btn branch-btn">{{icon "branch"}} main</span>
+  <nav class="crumbs">{{range $i, $c := .Crumbs}}{{if $i}} / {{end}}<a href="{{$c.Href}}">{{if $i}}{{$c.Name}}{{else}}<strong>{{$c.Name}}</strong>{{end}}</a>{{end}}</nav>
+</div>
+<div class="box">
+  <div class="box-head muted">{{if .Binary}}{{.Size}} bytes{{else}}{{len .Lines}} lines · {{.Size}} bytes{{end}}</div>
+  {{if .Binary}}
+  <p class="blankslate">Binary file not shown.</p>
+  {{else}}
+  <table class="blob">
+    {{range $i, $l := .Lines}}<tr id="L{{inc $i}}"><td class="ln"><a href="#L{{inc $i}}">{{inc $i}}</a></td><td class="code">{{$l}}</td></tr>
+    {{end}}
+  </table>
+  {{end}}
+</div>
+{{end}}{{end}}
