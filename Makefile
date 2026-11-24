@@ -1,8 +1,20 @@
 CERTS := certs
 
+TELEPORT_VERSION ?= 19.0.1
+TELEPORT_IMAGE ?= public.ecr.aws/gravitational/teleport-ent-distroless-debug:$(TELEPORT_VERSION)
+export TELEPORT_IMAGE
+
 .PHONY: up
 up:
 	docker compose up
+
+.PHONY: down
+down:
+	docker compose down
+
+.PHONY: stop
+stop:
+	docker compose stop
 
 .PHONY: clean
 clean:
