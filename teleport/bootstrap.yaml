@@ -1,6 +1,7 @@
 # Applied by `teleport start --bootstrap` on first start only (empty backend).
 
-# SSH as root to every node. Granted to admins; requestable by readonly.
+# SSH as root to every node, and cluster-admin on every Kubernetes cluster.
+# Granted to admins; requestable by readonly.
 kind: role
 version: v7
 metadata:
@@ -10,6 +11,14 @@ spec:
     logins: [root]
     node_labels:
       '*': '*'
+    kubernetes_groups: [system:masters]
+    kubernetes_labels:
+      '*': '*'
+    kubernetes_resources:
+      - kind: '*'
+        namespace: '*'
+        name: '*'
+        verbs: ['*']
 ---
 # Can see nodes but not log in; may request root-access.
 kind: role

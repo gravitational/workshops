@@ -1,0 +1,61 @@
+# What the GitHub Actions bot may do: deploy into the `demo` namespace of any
+# Kubernetes cluster enrolled in Teleport.
+kind: role
+version: v7
+metadata:
+  name: github-actions-k8s-demo
+spec:
+  allow:
+    # Which Kubernetes clusters (by Teleport label) the bot can access.
+    kubernetes_labels:
+      "*": "*"
+    # The Kubernetes group Teleport impersonates; k3s's RBAC grants it access
+    # to the demo namespace.
+    kubernetes_groups:
+      - github-ci
+    # Which Kubernetes resources Teleport lets the bot's requests through to.
+    kubernetes_resources:
+      - kind: "*"
+        namespace: demo
+        name: "*"
+        verbs: ["*"]
+---
+# The Machine ID bot the workflow's tbot joins as. It holds the role that
+# grants Kubernetes access.
+kind: bot
+version: v1
+metadata:
+  name: github-actions-k8s-demo
+spec:
+  roles:
+    - github-actions-k8s-demo
+---
+# Join token for the bot: lets a GitHub Actions job join without a stored
+# secret, by presenting its GitHub-signed OIDC ID token. teleport/setup.sh
+# fills in the repository from GITHUB_REPOSITORY.
+kind: token
+version: v2
+metadata:
+  # The name the workflow passes as `token:` to teleport-actions/auth-k8s.
+  name: github-actions-k8s-demo
+spec:
+  # Tokens for bots always carry the Bot system role.
+  roles: [Bot]
+  # The bot that a successful join authenticates as.
+  bot_name: github-actions-k8s-demo
+  # Verify the job's GitHub Actions ID token instead of a shared secret.
+  join_method: github
+
+  github:
+    # The GitHub Enterprise Server whose OIDC issuer
+    # (https://<host>/_services/token) signs the ID tokens.
+    # (The emulated server in this demo)
+    enterprise_server_host: github.localhost:11443
+    # A job may join only if its token's claims match one of these rules.
+    allow:
+      # Only workflows in this repository (owner/name)...
+      - repository: ${GITHUB_REPOSITORY}
+        # ...running on a branch (not a tag)...
+        ref_type: branch
+        # ...and only on main, so a run from another branch is rejected.
+        ref: refs/heads/main

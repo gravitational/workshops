@@ -1,0 +1,38 @@
+name: Deploy
+on:
+  push:
+    branches: [main]
+  # Adds the "Run workflow" button on the Actions page.
+  workflow_dispatch:
+jobs:
+  deploy:
+    name: Deploy to Kubernetes via Teleport Machine ID
+    runs-on: ubuntu-latest
+    permissions:
+      # Lets the job request a GitHub OIDC ID token, which tbot uses to join
+      # the Teleport cluster. No long-lived secret is stored anywhere.
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-kubectl@v4
+      - uses: teleport-actions/setup@v1
+        with:
+          # Should match the version of your Teleport cluster.
+          version: 18.11.7
+      # https://github.com/teleport-actions/auth-k8s
+      - uses: teleport-actions/auth-k8s@v2
+        with:
+          # The address of your Teleport proxy, as reachable from the runner.
+          proxy: teleport.localhost:3080
+          # The name of the join token for the bot.
+          token: github-actions-k8s-demo
+          # How long the generated credentials are valid for (defaults to
+          # "1h"). This job doesn't need longer than 10m.
+          certificate-ttl: 10m
+          # The name of the Kubernetes cluster in Teleport to get credentials
+          # for.
+          kubernetes-cluster: k3s
+      - run: kubectl apply -f ./manifests/deployment.yaml
+      - run: kubectl -n demo rollout status deployment/nginx --timeout=120s
+      - run: kubectl -n demo get pods

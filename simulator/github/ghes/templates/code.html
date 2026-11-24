@@ -1,0 +1,21 @@
+{{define "content"}}{{with .Data}}
+<div class="filenav">
+  <span class="btn branch-btn">{{icon "branch"}} main</span>
+  <nav class="crumbs">{{range $i, $c := .Crumbs}}{{if $i}} / {{end}}<a href="{{$c.Href}}">{{if $i}}{{$c.Name}}{{else}}<strong>{{$c.Name}}</strong>{{end}}</a>{{end}}</nav>
+</div>
+<div class="box">
+  <div class="box-head muted">{{len .Entries}} items</div>
+  <table class="files">
+    {{if .Parent}}<tr><td><a href="{{.Parent}}">..</a></td></tr>{{end}}
+    {{range .Entries}}
+    <tr><td>{{if .Dir}}{{icon "dir"}} <a href="/{{$.Repo}}/tree/main/{{.Path}}">{{.Name}}</a>{{else}}{{icon "file"}} <a href="/{{$.Repo}}/blob/main/{{.Path}}">{{.Name}}</a>{{end}}</td></tr>
+    {{end}}
+  </table>
+</div>
+{{with .Readme}}
+<div class="box readme">
+  <div class="box-head">{{icon "file"}} README.md</div>
+  <pre>{{.}}</pre>
+</div>
+{{end}}
+{{end}}{{end}}

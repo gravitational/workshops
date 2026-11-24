@@ -1,0 +1,103 @@
+{{define "content"}}{{$repo := .Repo}}{{with .Data}}
+<div id="run" data-json="{{.JSONURL}}" data-status="{{.Status}}">
+  <p class="back"><a href="/{{$repo}}/actions?workflow={{.Workflow}}">← {{.WorkflowName}}</a></p>
+  <div id="poll-notice" class="run-message failure" hidden>This run no longer exists — the simulator was restarted.</div>
+  <h2 class="run-title"><span id="run-icon" class="state {{.State}}">{{icon .State}}</span> {{.WorkflowName}} <span class="muted">#{{.Number}}</span></h2>
+  <div class="box run-summary">
+    <div><div class="muted small">Triggered via workflow_dispatch</div><strong>{{.Actor}}</strong> <span class="branch-label">{{.Branch}}</span> <span class="muted small">{{ago .Created}}</span></div>
+    <div><div class="muted small">Status</div><strong id="run-status">{{.StatusText}}</strong></div>
+  </div>
+  <div class="box job">
+    <div class="box-head"><span id="job-icon" class="state {{.State}}">{{icon .State}}</span> <strong>{{.Job}}</strong></div>
+    <div id="run-message" class="run-message {{.State}}"{{if not .Message}} hidden{{end}}>{{.Message}}</div>
+    <div id="steps">
+      {{range .Steps}}
+      <details class="step" data-state="{{.State}}"{{if .Open}} open{{end}}>
+        <summary><span class="state {{.State}}">{{icon .State}}</span> {{.Name}}</summary>
+        <div class="log">{{range .Log}}<div class="line">{{.}}</div>{{end}}</div>
+      </details>
+      {{end}}
+    </div>
+  </div>
+  {{range .States}}<template id="icon-{{.}}">{{icon .}}</template>{{end}}
+</div>
+<script>
+(function () {
+  var root = document.getElementById("run");
+  if (root.dataset.status === "completed") return;
+  var steps = document.getElementById("steps");
+  // Each step's state as last rendered. A step is expanded when it changes
+  // into in_progress or failure, even if the user collapsed it while it
+  // ran; otherwise the user's choice is kept.
+  var seen = [];
+  steps.querySelectorAll("details").forEach(function (d, i) { seen[i] = d.dataset.state; });
+  var last = "";
+  var delay = 1000; // grows while the simulator is unreachable
+
+  function icon(id, state) {
+    var el = document.getElementById(id);
+    el.className = "state " + state;
+    el.replaceChildren(document.getElementById("icon-" + state).content.cloneNode(true));
+  }
+
+  function render(r) {
+    icon("run-icon", r.state);
+    icon("job-icon", r.state);
+    document.getElementById("run-status").textContent = r.status_text;
+    var msg = document.getElementById("run-message");
+    msg.className = "run-message " + r.state;
+    msg.textContent = r.message;
+    msg.hidden = !r.message;
+    var open = Array.prototype.map.call(steps.querySelectorAll("details"), function (d) { return d.open; });
+    steps.replaceChildren.apply(steps, r.steps.map(function (s, i) {
+      var expand = (s.state === "in_progress" || s.state === "failure") && seen[i] !== s.state;
+      var d = document.createElement("details");
+      d.className = "step";
+      d.dataset.state = s.state;
+      d.open = expand || (i < open.length && open[i]);
+      seen[i] = s.state;
+      var sum = document.createElement("summary");
+      var st = document.createElement("span");
+      st.className = "state " + s.state;
+      st.appendChild(document.getElementById("icon-" + s.state).content.cloneNode(true));
+      sum.append(st, " " + s.name);
+      var log = document.createElement("div");
+      log.className = "log";
+      (s.log || []).forEach(function (l) {
+        var line = document.createElement("div");
+        line.className = "line";
+        line.textContent = l;
+        log.appendChild(line);
+      });
+      d.append(sum, log);
+      return d;
+    }));
+  }
+
+  function poll() {
+    fetch(root.dataset.json, { cache: "no-store" })
+      .then(function (resp) {
+        if (resp.status === 404) return null;
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return resp.json();
+      })
+      .then(function (r) {
+        if (r === null) {
+          // Runs live in memory, so a restarted simulator has forgotten it.
+          document.getElementById("poll-notice").hidden = false;
+          return;
+        }
+        delay = 1000;
+        var text = JSON.stringify(r);
+        if (text !== last) { last = text; render(r); }
+        if (r.status !== "completed") setTimeout(poll, delay);
+      })
+      .catch(function () {
+        delay = Math.min(delay * 2, 30000);
+        setTimeout(poll, delay);
+      });
+  }
+  setTimeout(poll, 1000);
+})();
+</script>
+{{end}}{{end}}
