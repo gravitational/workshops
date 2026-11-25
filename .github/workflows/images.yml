@@ -29,7 +29,9 @@ jobs:
           go test ./...
           go vet ./...
       - name: Validate Compose configuration
-        run: docker compose config --quiet
+        run: |
+          docker compose config --quiet
+          docker compose -f compose.publish.yml config --quiet
 
   build:
     needs: test
@@ -41,7 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [simulator, teleport, compose]
+        image: [simulator, teleport]
     env:
       IMAGE_PREFIX: public.ecr.aws/gravitational-staging/workshops
       # teleport-stage role created by the cloud-terraform workshop ECR stack.
@@ -83,3 +85,42 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  # Publishes compose.publish.yml as an OCI Compose artifact, pinned to the
+  # image digests pushed by `build` for this commit. Customers run it with
+  # `docker compose -f oci://<prefix>/compose:<tag> up`.
+  publish-compose:
+    needs: build
+    if: github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      IMAGE_PREFIX: public.ecr.aws/gravitational-staging/workshops
+      ROLE_ARN: arn:aws:iam::603330915152:role/workshops-github-action-ecr-role
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Assume publisher role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: us-east-1
+          role-session-name: workshops-${{ github.run_id }}
+      - name: Log in to public ECR
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
+        with:
+          registry-type: public
+      - name: Publish Compose stack
+        env:
+          # Resolved to digests at publish time; the published file keeps the
+          # variables, and an image-digests layer pins the images.
+          WORKSHOP_IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
+          WORKSHOP_IMAGE_TAG: sha-${{ github.sha }}
+        run: |
+          docker compose version
+          for tag in "sha-${GITHUB_SHA}" latest; do
+            docker compose -f compose.publish.yml publish --yes --resolve-image-digests \
+              "${IMAGE_PREFIX}/compose:${tag}"
+          done

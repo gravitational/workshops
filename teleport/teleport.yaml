@@ -8,6 +8,12 @@ teleport:
     output: stderr
     severity: INFO
 
+# The debug service listens on a Unix socket in data_dir, and binding a socket
+# on a Docker Desktop (macOS) bind mount fails intermittently with
+# "bind: operation not supported", crash-looping Teleport.
+debug_service:
+  enabled: false
+
 auth_service:
   enabled: true
   cluster_name: teleport.localhost

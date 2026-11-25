@@ -30,6 +30,8 @@ stack.
 
 ## Run
 
+### Development
+
 Run `make up` or `docker compose up` to start the workshop environments. The
 environments store their state in `./data` (and the k3s cluster in the
 `k3s-data` Docker volume). For a fresh cluster, run `make clean`; changes to
@@ -38,30 +40,26 @@ cluster.
 
 Open Teleport at https://teleport.localhost:3080.
 
-## Published images
+### Testing Published Stack (Local)
 
-The `CICD` workflow builds `simulator`, `teleport`, and `compose` for
-`linux/amd64` and `linux/arm64` using QEMU. All branches and PRs test and build;
-only `main` authenticates to AWS and publishes `latest` and
-`sha-<full-commit-sha>` tags. Manual runs follow the same rule.
+```sh
+docker build -f Dockerfile.simulator -t workshops/simulator:dev .
+docker build -f Dockerfile.teleport  -t workshops/teleport:dev .
+WORKSHOP_IMAGE_PREFIX=workshops WORKSHOP_IMAGE_TAG=dev \
+  docker compose -f compose.publish.yml up --pull never
+```
 
-Images are published under `public.ecr.aws/gravitational-staging/workshops`.
-Apply the ECR Terraform stack before publishing; no repository variables are needed.
+Open Teleport at https://teleport.localhost:3080.
 
-The workflow uses the `workshops-github-action-ecr-role` in `teleport-stage`
-via OIDC and public ECR in `us-east-1`; no AWS keys are required.
+### Testing Published Stack (Remote)
 
-To use published images, set `WORKSHOP_IMAGE_PREFIX` to
-`public.ecr.aws/gravitational-staging/workshops` and
-`WORKSHOP_IMAGE_TAG` to `latest` or a `sha-...` tag, then run
-`docker compose pull` followed by `docker compose up --no-build`.
+```sh
+docker compose -f oci://public.ecr.aws/gravitational-staging/workshops/compose:latest up -d -y
+```
 
-The `compose` image is a file bundle, not a runnable service. Extract it with
-`docker create --name workshop-bundle <prefix>/compose:<tag>`,
-`docker cp workshop-bundle:/workshop/. ./workshop`, and
-`docker rm workshop-bundle`. Then follow the prerequisites and run instructions
-in the extracted directory. Licenses, TLS certificates, and runtime data are
-never included in the images.
+Open Teleport at https://teleport.localhost:3080.
+
+On Windows PowerShell, first set `$env:WORKSHOP_DIR = (Get-Location).Path`.
 
 ## Simulated Services
 

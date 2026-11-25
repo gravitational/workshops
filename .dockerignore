@@ -8,3 +8,5 @@
 !simulator/**
 !teleport/**
 !postgres/**
+# Local build output
+simulator/simulator
