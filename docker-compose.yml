@@ -75,9 +75,7 @@ services:
       SCIM_URL: https://teleport.localhost:3080/v1/webapi/scim/scim
       SCIM_TOKEN_FILE: /scim/token                  # written by teleport-setup
     volumes:
-      - ./simulator:/src:ro
       - ./github/repo:/github-repo:ro               # the simulated repo's contents
-      - go-cache:/root/go                           # module + build cache (not state)
       - ./data/simulator:/data                      # IdP keys, CA, Okta state
       - ./data/simulator-ca:/ca
       - ./data/scim-token:/scim:ro
@@ -132,9 +130,7 @@ services:
 
   teleport-setup:
     image: ${WORKSHOP_IMAGE_PREFIX:-workshops}/teleport:${WORKSHOP_IMAGE_TAG:-latest}
-    build:
-      context: .
-      dockerfile: Dockerfile.teleport
+    pull_policy: never   # the teleport service builds this image
     container_name: teleport-setup
     depends_on:
       teleport:
@@ -180,7 +176,6 @@ services:
       - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
       - ./data/pg-certs:/certs:ro
       - ./data/postgres:/var/lib/postgresql/data
-<<<<<<< HEAD
 
   k3s:
     image: rancher/k3s:v1.33.13-k3s2
@@ -229,9 +224,10 @@ services:
   # Runs the GHES's queued workflow runs. Holds no Teleport credentials: each
   # job's tbot joins with the run's GitHub ID token.
   ci-runner:
+    image: ${WORKSHOP_IMAGE_PREFIX:-workshops}/ci-runner:${WORKSHOP_IMAGE_TAG:-latest}
     build:
-      context: ./simulator
-      dockerfile: cmd/ci-runner/Dockerfile
+      context: .
+      dockerfile: Dockerfile.ci-runner
     container_name: ci-runner
     restart: unless-stopped
     init: true   # reap the tbot/kubectl/bash processes each job spawns
@@ -248,5 +244,4 @@ services:
       - ./certs/ca:/mkcert-ca:ro
 
 volumes:
-  go-cache:
   k3s-data:                                       # cluster state (see `make clean`)

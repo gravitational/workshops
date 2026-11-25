@@ -8,5 +8,6 @@
 !simulator/**
 !teleport/**
 !postgres/**
+!github/repo/**
 # Local build output
 simulator/simulator

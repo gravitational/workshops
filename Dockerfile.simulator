@@ -14,6 +14,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 FROM gcr.io/distroless/static-debian12
 COPY --from=build /out/simulator /usr/local/bin/simulator
+# The simulated GHES repo's contents (GITHUB_REPO_DIR)
+COPY github/repo/ /github-repo/
 ENV SIMULATOR_DATA_DIR=/data
-EXPOSE 8080 8443 9443 443 10443
+EXPOSE 8080 8443 9443 443 10443 11443
 ENTRYPOINT ["/usr/local/bin/simulator"]

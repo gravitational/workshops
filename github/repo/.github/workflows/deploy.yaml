@@ -19,7 +19,7 @@ jobs:
       - uses: teleport-actions/setup@v1
         with:
           # Should match the version of your Teleport cluster.
-          version: 18.11.7
+          version: 19.0.1
       # https://github.com/teleport-actions/auth-k8s
       - uses: teleport-actions/auth-k8s@v2
         with:

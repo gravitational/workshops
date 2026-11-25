@@ -11,7 +11,8 @@ permissions:
 
 concurrency:
   group: workshop-images-${{ github.ref }}
-  cancel-in-progress: false
+  # Supersede stale PR runs; never cancel a publish on main.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -43,7 +44,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [simulator, teleport]
+        image: [simulator, teleport, ci-runner]
     env:
       IMAGE_PREFIX: public.ecr.aws/gravitational-staging/workshops
       # teleport-stage role created by the cloud-terraform workshop ECR stack.

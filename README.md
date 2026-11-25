@@ -45,6 +45,7 @@ Open Teleport at https://teleport.localhost:3080.
 ```sh
 docker build -f Dockerfile.simulator -t workshops/simulator:dev .
 docker build -f Dockerfile.teleport  -t workshops/teleport:dev .
+docker build -f Dockerfile.ci-runner -t workshops/ci-runner:dev .
 WORKSHOP_IMAGE_PREFIX=workshops WORKSHOP_IMAGE_TAG=dev \
   docker compose -f compose.publish.yml up --pull never
 ```
