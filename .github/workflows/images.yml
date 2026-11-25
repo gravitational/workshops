@@ -56,14 +56,14 @@ jobs:
           platforms: arm64
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Assume publisher role
-        if: github.ref_name == 'main'
+        if: &main_branch github.ref_name == 'main'
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ env.ROLE_ARN }}
           aws-region: us-east-1
           role-session-name: workshops-${{ github.run_id }}
       - name: Log in to public ECR
-        if: github.ref_name == 'main'
+        if: *main_branch
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
         with:
           registry-type: public
@@ -92,7 +92,6 @@ jobs:
   # `docker compose -f oci://<prefix>/compose:<tag> up`.
   publish-compose:
     needs: build
-    if: github.ref_name == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -104,12 +103,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Assume publisher role
+        if: *main_branch
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ env.ROLE_ARN }}
           aws-region: us-east-1
           role-session-name: workshops-${{ github.run_id }}
       - name: Log in to public ECR
+        if: *main_branch
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
         with:
           registry-type: public
@@ -119,9 +120,11 @@ jobs:
           # variables, and an image-digests layer pins the images.
           WORKSHOP_IMAGE_PREFIX: ${{ env.IMAGE_PREFIX }}
           WORKSHOP_IMAGE_TAG: sha-${{ github.sha }}
+          COMPOSE_FLAGS: ${{ github.ref_name == 'main' && '--resolve-image-digests' || '--dry-run' }}
+          COMPOSE_IMAGE_PREFIX: ${{ github.ref_name == 'main' && env.IMAGE_PREFIX || 'dry-run' }}
         run: |
           docker compose version
           for tag in "sha-${GITHUB_SHA}" latest; do
-            docker compose -f compose.publish.yml publish --yes --resolve-image-digests \
-              "${IMAGE_PREFIX}/compose:${tag}"
+            docker compose -f compose.publish.yml publish ${COMPOSE_FLAGS} --yes \
+              "${COMPOSE_IMAGE_PREFIX}/compose:${tag}"
           done
