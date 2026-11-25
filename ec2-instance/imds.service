@@ -1,0 +1,14 @@
+# The EC2 instance metadata service at 169.254.169.254, served by the AWS
+# simulator (it identifies this instance by the container's IP).
+[Unit]
+Description=EC2 instance metadata (forwarded to the AWS simulator)
+Before=network-online.target
+
+[Service]
+ExecStartPre=/usr/sbin/ip addr replace 169.254.169.254/32 dev lo
+ExecStart=/usr/bin/socat TCP-LISTEN:80,bind=169.254.169.254,fork,reuseaddr TCP:simulator:1338
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

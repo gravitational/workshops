@@ -1,0 +1,15 @@
+# Trust the workshop's mkcert CA (bind-mounted by docker-compose.yml), which
+# signed the Teleport proxy's certificate: the installer and Teleport dial
+# https://teleport.localhost:3080.
+[Unit]
+Description=Trust the workshop's mkcert CA
+Before=network-online.target
+ConditionPathExists=/usr/local/share/ca-certificates/mkcert-ca.crt
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/update-ca-certificates
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,7 +1,8 @@
 #!/busybox/sh
 # One-shot: create Access Lists, the GitHub Actions bot (role, bot and join
 # token) and install the SCIM plugin (none of which --bootstrap can create),
-# then write the SCIM bearer token to /scim/token for the simulator.
+# issue an identity for Terraform, then write the SCIM bearer token to
+# /scim/token for the simulator.
 set -e
 # Runs in Teleport's network namespace, so tctl reaches Auth on localhost.
 tctl() { /usr/local/bin/tctl -c /etc/teleport/teleport.yaml "$@"; }
@@ -29,6 +30,22 @@ fi
 chown 999:999 /pg-certs/server.*
 chmod 644 /pg-certs/server.crt /pg-certs/server.cas
 chmod 600 /pg-certs/server.key
+
+# Terraform (terraform/aws-discovery): a local user with the preset
+# terraform-provider role, and an identity file for the Teleport provider.
+# Reissued on every start; rerun `docker compose up teleport-setup` to renew.
+cat > /tmp/terraform-user.yaml <<'EOF'
+kind: user
+version: v2
+metadata:
+  name: terraform
+spec:
+  roles: [terraform-provider]
+EOF
+tctl create -f /tmp/terraform-user.yaml
+tctl auth sign --user=terraform --format=file --out=/terraform/identity --ttl=12h --overwrite
+chmod 644 /terraform/identity   # read by terraform on the host
+echo "Terraform identity written to data/terraform/identity (valid 12h)"
 
 if [ -s /scim/token ] && tctl get plugins/scim >/dev/null 2>&1; then
   echo "SCIM plugin already installed"

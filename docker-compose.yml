@@ -7,10 +7,15 @@ name: teleport
 #                      Entra ID tenant (wizard)   https://entra.localhost:10443
 #                      GitHub Enterprise Server   https://github.localhost:11443
 #                        (Actions OIDC issuer for Teleport's `github` join)
-#   teleport         Auth + Proxy + Node + DB, bootstrapped  https://teleport.localhost:3080
+#                      AWS account (EC2 discovery) https://aws.localhost:12443
+#                        (IAM/STS/EC2/SSM endpoint for Teleport and Terraform,
+#                        and the SSM agent and IMDS of ec2-web-1)
+#   teleport         Auth + Proxy + Node + DB + Discovery, bootstrapped
+#                    https://teleport.localhost:3080
 #   teleport-setup   one-shot: creates Access Lists, the GitHub Actions bot,
 #                    role and join token, installs the SCIM plugin, shares the
-#                    SCIM token with the simulator, and issues Postgres's TLS cert
+#                    SCIM token with the simulator, issues Postgres's TLS cert,
+#                    and writes an identity for Terraform (terraform/aws-discovery)
 #   postgres         reached only through Teleport (cert auth)
 #   k3s              Kubernetes cluster `k3s`, reached through Teleport's
 #                    kubernetes_service; applies k3s/manifests on start
@@ -18,6 +23,9 @@ name: teleport
 #                    for Teleport
 #   ci-runner        the simulated GitHub Actions runner: runs dispatched
 #                    workflows (tbot + kubectl) against Teleport and k3s
+#   ec2-web-1        a simulated EC2 instance (Ubuntu + systemd, no Teleport):
+#                    EC2 discovery installs Teleport on it through "SSM", and
+#                    it joins with the IAM join method
 #
 # Prerequisite: `make certs` (browser-trusted TLS certs in ./certs, via mkcert).
 #
@@ -46,6 +54,8 @@ services:
       - "10443:443"   # Entra ID tenant (browser only; Teleport uses the Microsoft names)
       # GitHub Enterprise Server (browser; the runner and Teleport use the network)
       - "127.0.0.1:11443:11443"
+      # AWS endpoint and console (Terraform on the host; Teleport uses the network)
+      - "127.0.0.1:12443:12443"
     networks:
       default:
         aliases:
@@ -53,10 +63,16 @@ services:
           - okta.localhost                          # Teleport calls the Okta API here
           - entra.localhost
           - github.localhost                        # Teleport fetches the Actions OIDC keys here
+          - aws.localhost                           # Teleport's AWS SDK calls (AWS_ENDPOINT_URL)
           # Teleport only calls Microsoft's real hostnames for Entra ID, so on
           # this network they resolve to the simulator (port 443).
           - login.microsoftonline.com
           - graph.microsoft.com
+          # Likewise AWS STS, where Teleport sends the IAM join method's
+          # presigned sts:GetCallerIdentity request (port 443).
+          - sts.amazonaws.com
+          - sts.us-east-1.amazonaws.com
+          - sts.us-west-2.amazonaws.com
     environment:
       SIMULATOR_URL: https://duo.localhost:8443
       SIMULATOR_DATA_DIR: /data
@@ -71,6 +87,13 @@ services:
       GITHUB_URL: https://github.localhost:11443
       GITHUB_REPOSITORY: ${GITHUB_REPOSITORY:-example-org/teleport-k8s-demo}
       GITHUB_REPO_DIR: /github-repo
+      AWS_LISTEN_ADDR: ":12443"
+      AWS_URL: https://aws.localhost:12443
+      AWS_ACCOUNT_ID: "123456789012"
+      AWS_IMDS_LISTEN_ADDR: ":1338"                 # ec2-web-1's 169.254.169.254
+      # The simulator is ec2-web-1's SSM agent: it runs SSM commands there with
+      # docker exec. (Access to the Docker socket is access to the host's Docker.)
+      AWS_DOCKER_SOCKET: /var/run/docker.sock
       SCIM_URL: https://teleport.localhost:3080/v1/webapi/scim/scim
       SCIM_TOKEN_FILE: /scim/token                  # written by teleport-setup
     volumes:
@@ -82,6 +105,7 @@ services:
       - ./data/scim-token:/scim:ro
       - ./certs:/certs:ro
       - ./certs/ca:/mkcert-ca:ro
+      - /var/run/docker.sock:/var/run/docker.sock   # AWS_DOCKER_SOCKET
     healthcheck:                                    # first start compiles; give it time
       test: ["CMD", "curl", "-sf", "http://localhost:8080/healthz"]
       interval: 3s
@@ -106,6 +130,10 @@ services:
       # mkcert CA: Okta API, and the DB service tunneling to this proxy.
       # Simulator CA: the fake Microsoft endpoints.
       SSL_CERT_DIR: /etc/ssl/certs:/mkcert-ca:/simulator-ca
+      # Every AWS SDK client (EC2 discovery: STS, EC2, SSM, Account) calls the
+      # simulated AWS account instead of AWS.
+      AWS_ENDPOINT_URL: https://aws.localhost:12443
+      AWS_EC2_METADATA_DISABLED: "true"   # not on EC2; don't probe IMDS
     ports:
       - "3080:3080"   # Web UI, tsh, and all multiplexed protocols
     volumes:
@@ -145,6 +173,7 @@ services:
       - ./data/teleport:/var/lib/teleport
       - ./data/scim-token:/scim
       - ./data/pg-certs:/pg-certs
+      - ./data/terraform:/terraform      # identity for terraform/aws-discovery
       - ./certs:/etc/teleport/certs:ro   # tctl checks the https_keypairs in teleport.yaml exist
       - ./certs/ca:/mkcert-ca:ro
 
@@ -238,6 +267,27 @@ services:
     volumes:
       - ./github/repo:/github-repo:ro           # checked out into each job's workspace
       - ./certs/ca:/mkcert-ca:ro
+
+
+  # A simulated EC2 instance (i-0a1b2c3d4e5f60001, "web-1" in the simulated AWS
+  # account): a plain Ubuntu host with systemd. EC2 discovery finds it, sends
+  # Teleport's install script through SSM (the simulator runs it here), and
+  # Teleport installs from Teleport's package repository and joins as a node
+  # with the IAM join method. Its 169.254.169.254 is the simulator's IMDS.
+  # `docker compose rm -sf ec2-web-1 && docker compose up -d ec2-web-1` gives
+  # a fresh instance to discover again.
+  ec2-web-1:
+    build: ./ec2-instance
+    container_name: ec2-web-1
+    hostname: ip-10-0-1-11            # as EC2 names instances
+    restart: unless-stopped
+    privileged: true                  # systemd, and the IMDS address on lo
+    tmpfs: [/run, /run/lock]
+    depends_on:
+      simulator:
+        condition: service_healthy
+    volumes:
+      - ./certs/ca/mkcert-ca.pem:/usr/local/share/ca-certificates/mkcert-ca.crt:ro
 
 volumes:
   go-cache:

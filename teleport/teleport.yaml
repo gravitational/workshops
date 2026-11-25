@@ -46,3 +46,13 @@ kubernetes_service:
   kubeconfig_file: /etc/teleport/kube/kubeconfig.yaml
   labels:
     env: docker
+
+# EC2 auto-discovery. Runs the discovery_configs in this group, which
+# terraform/aws-discovery creates. Its AWS API calls go to the simulated AWS
+# account (AWS_ENDPOINT_URL in docker-compose.yml).
+discovery_service:
+  enabled: true
+  # The group Teleport's web UI uses in its Terraform flow (and on Teleport
+  # Cloud); teleport_discovery_group_name in terraform/aws-discovery.
+  discovery_group: cloud-discovery-group
+  poll_interval: 1m   # default 5m; shorter so new instances show up quickly

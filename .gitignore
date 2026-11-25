@@ -2,3 +2,8 @@
 /certs/
 /data/
 /license.pem
+# Terraform working files (terraform/aws-discovery)
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl

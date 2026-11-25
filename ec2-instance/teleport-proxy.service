@@ -1,0 +1,15 @@
+# curl resolves every *.localhost name to the loopback address without
+# asking DNS (RFC 6761), so the installer's `curl https://teleport.localhost:3080`
+# reaches this instance's 127.0.0.1:3080. Forward that to the Teleport
+# container. (Teleport itself resolves the name through Docker's DNS.)
+[Unit]
+Description=Forward 127.0.0.1:3080 to the workshop's Teleport proxy
+Before=network-online.target
+
+[Service]
+ExecStart=/usr/bin/socat TCP-LISTEN:3080,bind=127.0.0.1,fork,reuseaddr TCP:teleport:3080
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
