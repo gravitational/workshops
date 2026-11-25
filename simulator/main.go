@@ -13,6 +13,9 @@
 //   - "GitHub": a simulated GitHub Enterprise Server on its own port: the
 //     Actions OIDC token issuer, the jobs' ID token endpoint, a run queue
 //     and API for the CI runner container, and workflow dispatch.
+//   - "AWS": a simulated AWS account on its own port: the IAM, STS, EC2, SSM
+//     and Account API calls that Teleport's EC2 auto-discovery and the
+//     Terraform discovery/aws module make, over a few fake EC2 instances.
 //
 // It runs with no CLI flags. Everything is optional and configured via env:
 //
@@ -32,6 +35,11 @@
 //	GITHUB_URL                 GHES URL (browsers, runner, OIDC issuer) (default "https://github.localhost:11443")
 //	GITHUB_REPOSITORY          simulated repo, owner/name    (default "example-org/teleport-k8s-demo")
 //	GITHUB_REPO_DIR            the simulated repo's contents (default "../github/repo")
+//	AWS_LISTEN_ADDR            AWS API HTTPS listen address  (default ":12443")
+//	AWS_URL                    AWS endpoint and console URL  (default "https://aws.localhost:12443")
+//	AWS_ACCOUNT_ID             simulated account ID          (default "123456789012")
+//	AWS_IMDS_LISTEN_ADDR       EC2 instance metadata (HTTP) listen address (default ":1338")
+//	AWS_DOCKER_SOCKET          Docker API socket, to run SSM commands in the instance containers
 //	SCIM_URL                   Duo SCIM base URL to push to (Duo SCIM disabled if empty)
 //	SCIM_TOKEN                 bearer token for SCIM_URL
 //	SCIM_TOKEN_FILE            file holding the bearer token; re-read each sync
@@ -47,11 +55,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
 	"time"
 
+	"simulator/aws"
 	"simulator/github/ghes"
 )
 
@@ -142,6 +152,10 @@ type Config struct {
 
 	GitHubListenAddr string
 	GitHub           ghes.Config // Key is loaded in main
+
+	AWSListenAddr     string
+	AWSIMDSListenAddr string
+	AWS               aws.Config
 }
 
 func env(key, def string) string {
@@ -182,6 +196,14 @@ func loadConfig() Config {
 		URL:        strings.TrimRight(env("GITHUB_URL", "https://github.localhost:11443"), "/"),
 		Repository: env("GITHUB_REPOSITORY", "example-org/teleport-k8s-demo"),
 		RepoDir:    env("GITHUB_REPO_DIR", "../github/repo"),
+	}
+	cfg.AWSListenAddr = env("AWS_LISTEN_ADDR", ":12443")
+	cfg.AWSIMDSListenAddr = env("AWS_IMDS_LISTEN_ADDR", ":1338")
+	cfg.AWS = aws.Config{
+		URL:          strings.TrimRight(env("AWS_URL", "https://aws.localhost:12443"), "/"),
+		AccountID:    env("AWS_ACCOUNT_ID", "123456789012"),
+		StateFile:    filepath.Join(cfg.DataDir, "aws-iam.json"),
+		DockerSocket: env("AWS_DOCKER_SOCKET", ""),
 	}
 	return cfg
 }
@@ -255,13 +277,23 @@ func main() {
 	}
 	go github.Run(ctx)
 
-	// Duo: HTTP (in-network metadata) and HTTPS (browsers). Okta, Entra, GitHub: HTTPS only.
+	// Simulated AWS account. Its IAM state is persisted for Terraform.
+	awsAccount, err := aws.New(cfg.AWS)
+	if err != nil {
+		log.Fatalf("aws: %v", err)
+	}
+
+	// Duo: HTTP (in-network metadata) and HTTPS (browsers). Okta, Entra, GitHub, AWS: HTTPS only.
 	servers := []*http.Server{
 		{Addr: cfg.ListenAddr, Handler: logRequests("duo", mux)},
 		{Addr: cfg.TLSListenAddr, Handler: logRequests("duo", mux), TLSConfig: tlsConfig},
 		{Addr: cfg.OktaListenAddr, Handler: logRequests("okta", oktaHandler(org, oktaIDP, oktaSCIM)), TLSConfig: tlsConfig},
-		{Addr: cfg.EntraListenAddr, Handler: logRequests("entra", entra.handler()), TLSConfig: tlsConfig},
+		// Also STS's real hostnames, which Teleport's IAM join method calls.
+		{Addr: cfg.EntraListenAddr, Handler: byHost(awsNames, awsAccount.Handler(), logRequests("entra", entra.handler())), TLSConfig: tlsConfig},
 		{Addr: cfg.GitHubListenAddr, Handler: logRequests("github", github.Handler()), TLSConfig: tlsConfig},
+		// The AWS simulator logs its own calls by service and action.
+		{Addr: cfg.AWSListenAddr, Handler: awsAccount.Handler(), TLSConfig: tlsConfig},
+		{Addr: cfg.AWSIMDSListenAddr, Handler: awsAccount.IMDSHandler()}, // forwarded from the instances' 169.254.169.254
 	}
 	errc := make(chan error, len(servers))
 	for _, srv := range servers {
@@ -278,6 +310,7 @@ func main() {
 	log.Printf("okta: listening on %s (https); console %s; org URL %s", cfg.OktaListenAddr, cfg.OktaURL, cfg.OktaOrgURL)
 	log.Printf("entra: listening on %s (https); console %s", cfg.EntraListenAddr, cfg.EntraURL)
 	log.Printf("github: listening on %s (https); console %s; repo %s", cfg.GitHubListenAddr, cfg.GitHub.URL, cfg.GitHub.Repository)
+	log.Printf("aws: listening on %s (https); endpoint and console %s; account %s", cfg.AWSListenAddr, cfg.AWS.URL, cfg.AWS.AccountID)
 	printOktaWizardValues(org)
 	printEntraWizardValues(entra)
 
@@ -294,6 +327,21 @@ func main() {
 }
 
 func healthz(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) }
+
+// byHost sends requests for one of names to h, and the rest to other.
+func byHost(names []string, h, other http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := strings.ToLower(r.Host)
+		if i := strings.LastIndex(host, ":"); i >= 0 {
+			host = host[:i]
+		}
+		if slices.Contains(names, host) {
+			h.ServeHTTP(w, r)
+			return
+		}
+		other.ServeHTTP(w, r)
+	})
+}
 
 func logRequests(name string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -23,12 +23,20 @@ import (
 // so no certificate your host trusts is ever valid for Microsoft's domains.
 var microsoftNames = []string{"login.microsoftonline.com", "graph.microsoft.com"}
 
+// awsNames are AWS STS's real hostnames, aliased to this container the same
+// way: Teleport's Auth Service sends the IAM join method's presigned
+// sts:GetCallerIdentity request to the host the joining node signed it for.
+var awsNames = []string{"sts.amazonaws.com", "sts.us-east-1.amazonaws.com", "sts.us-west-2.amazonaws.com"}
+
+// internalOnlyNames always get the internal CA's certificate.
+var internalOnlyNames = append(slices.Clone(microsoftNames), awsNames...)
+
 // internalNames are the names on the internal-CA server certificate. Besides
 // the Microsoft names it covers everything else too, as a fallback when no
 // trusted (mkcert) certificate is configured.
 var internalNames = append([]string{
-	"localhost", "duo.localhost", "okta.localhost", "entra.localhost", "simulator",
-}, microsoftNames...)
+	"localhost", "duo.localhost", "okta.localhost", "entra.localhost", "github.localhost", "aws.localhost", "simulator",
+}, internalOnlyNames...)
 
 func caCertTemplate() *x509.Certificate {
 	return &x509.Certificate{
@@ -46,7 +54,9 @@ func caCertTemplate() *x509.Certificate {
 // simulator-ca.crt so other containers (Teleport) can trust it.
 //
 // If certFile and keyFile are set (a browser-trusted certificate, e.g. from
-// mkcert), it is served for every name except the Microsoft ones.
+// mkcert), it is served for every name it covers except the Microsoft ones.
+// Names it doesn't cover (e.g. aws.localhost, in certs made before it was
+// added to `make certs`) get the internal certificate, which Teleport trusts.
 func serverTLSConfig(dataDir, exportDir, certFile, keyFile string) (*tls.Config, error) {
 	caKey, caCert, err := loadOrCreateKeyPair(dataDir, "ca", caCertTemplate())
 	if err != nil {
@@ -90,9 +100,19 @@ func serverTLSConfig(dataDir, exportDir, certFile, keyFile string) (*tls.Config,
 	if err != nil {
 		return nil, fmt.Errorf("load %s: %w", certFile, err)
 	}
-	log.Printf("tls: serving %s (internal CA only for %s)", certFile, strings.Join(microsoftNames, ", "))
+	leaf, err := x509.ParseCertificate(trusted.Certificate[0])
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", certFile, err)
+	}
+	log.Printf("tls: serving %s (internal CA only for %s)", certFile, strings.Join(internalOnlyNames, ", "))
+	for _, name := range internalNames {
+		if strings.HasSuffix(name, ".localhost") && leaf.VerifyHostname(name) != nil {
+			log.Printf("tls: %s doesn't cover %s; serving the internal CA's certificate for it (run `make certs` to fix)", certFile, name)
+		}
+	}
 	return &tls.Config{GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-		if slices.Contains(microsoftNames, strings.ToLower(hello.ServerName)) {
+		name := strings.ToLower(hello.ServerName)
+		if slices.Contains(internalOnlyNames, name) || (name != "" && leaf.VerifyHostname(name) != nil) {
 			return internal, nil
 		}
 		return &trusted, nil

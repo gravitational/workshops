@@ -20,7 +20,7 @@ tools may not. As Administrator, add this line to
 `C:\Windows\System32\drivers\etc\hosts`:
 
 ```
-127.0.0.1 teleport.localhost duo.localhost okta.localhost entra.localhost github.localhost
+127.0.0.1 teleport.localhost duo.localhost okta.localhost entra.localhost github.localhost aws.localhost
 ```
 
 ### Teleport License
@@ -40,8 +40,8 @@ Open Teleport at https://teleport.localhost:3080.
 
 ## Simulated Services
 
-This Docker Compose stack runs four simulated services: Duo, Okta, Entra ID,
-and GitHub Enterprise Server.
+This Docker Compose stack runs five simulated services: Duo, Okta, Entra ID,
+GitHub Enterprise Server, and an AWS account.
 
 | Service  | URL                             | Metadata URL                                  |
 |----------|---------------------------------|-----------------------------------------------|
@@ -49,6 +49,10 @@ and GitHub Enterprise Server.
 | Okta     | https://okta.localhost:9443     | https://okta.localhost:9443/sso/saml/metadata  |
 | Entra ID | https://entra.localhost:10443   | https://entra.localhost:10443/sso/saml/metadata |
 | GitHub   | https://github.localhost:11443  | https://github.localhost:11443/_services/token/.well-known/openid-configuration |
+| AWS      | https://aws.localhost:12443     | (API endpoint for IAM, STS, EC2, SSM and Account; the URL is also its console) |
+
+If you generated certificates before `aws.localhost` was added, rerun `make
+certs` so your browser and Terraform trust https://aws.localhost:12443.
 
 ## GitHub Actions → Kubernetes (simulated GHES)
 
@@ -135,3 +139,36 @@ are skipped. The audit log shows a failed `bot.join`.
 4. Apply `k3s/manifests/github-ci-rbac.yaml` to your Kubernetes cluster
    (namespace `demo`, and RBAC for the `github-ci` group).
 5. Make sure your Teleport proxy is reachable from GitHub-hosted runners.
+
+## EC2 auto-discovery (simulated AWS)
+
+Teleport's Discovery Service (group `cloud-discovery-group`) discovers EC2 instances
+in a simulated AWS account. You set it up the way you would for a real
+account: with Teleport's `discovery/aws` Terraform module, which creates an
+IAM OIDC provider, role and policy, plus the Teleport integration, discovery
+config and join token.
+
+- `simulator` serves the AWS account at https://aws.localhost:12443: just the
+  IAM, STS, EC2, SSM and Account API calls this flow makes, over two
+  instances. Teleport reaches it through `AWS_ENDPOINT_URL`, and Terraform
+  through its provider's `endpoints` block.
+- `ec2-web-1` is instance `web-1`: a plain Ubuntu container with systemd. The
+  simulator is its SSM agent (it runs SSM commands with `docker exec`) and its
+  instance metadata service.
+- `teleport-setup` writes `data/terraform/identity` for Terraform's Teleport
+  provider.
+
+```
+cd terraform/aws-discovery
+terraform init
+terraform apply
+```
+
+Within a couple of minutes, Teleport discovers both instances. It installs
+Teleport on `web-1` with its default install script through SSM, and the
+instance joins as node `ip-10-0-1-11` with the IAM join method. `web-2`'s SSM
+agent has lost its connection, so the integration page (**Zero Trust Access
+→ Integrations**) shows it as a failed instance with a pending task. See
+[terraform/aws-discovery/README.md](terraform/aws-discovery/README.md) for
+what each instance shows, the full list of simulated APIs, and how the
+simulation differs from AWS.
